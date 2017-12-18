@@ -4,56 +4,103 @@
 #include "rs232.h"
 
 static int COM_PORT = -1;
-uint8_t* image;
+uint8_t image[360][360];
 
-static void createBMP( unsigned char* data, unsigned char w, unsigned char h ) {
-    FILE *f;
-    unsigned char *img = NULL;
-    int filesize = 54 + 3*w*h;  //w is your image width, h is image height, both int
+void dump( uint8_t* Matrix, int w, int h ){
+    FILE *out;
+    
+    out = fopen("img.txt","w");
+    
+    char str[w*h+1];
+    
+    for( int i = 0; i < w; ++i ) {
+        for( int j = 0; j < h; ++j ) {
+            char sub[5];
+            memset(sub, 0, sizeof(sub));
+            sprintf(str, "%d ", Matrix[j*w+i] );
+            strcat(str, sub);
+        }
+        strcat(str, "\n");
+    }
+    
+    fflush(out);
+    fclose(out);
+}
 
-    img = (unsigned char *)malloc(3*w*h);
-    memset(img,0,3*w*h);
-
-    for(int i=0; i<w; i++)
-    {
-        for(int j=0; j<h; j++)
-        {
-            int x=i, y=(h-1)-j;
-            img[(x+y*w)*3+2] = data[i*j];
-            img[(x+y*w)*3+1] = data[i*j];
-            img[(x+y*w)*3+0] = data[i*j];
+void writeBMP( uint8_t Matrix[360][360], int w, int h ){
+    FILE *out;
+    long pos = 0;
+ 
+    out = fopen("img.bmp","wb");
+ 
+    // Sizes
+    static const uint8_t headerSize = 14;
+    static const uint8_t infoHeaderSize = 40;
+    static const uint16_t colorTableSize = 4*256;
+    
+    // Header
+    uint8_t signature[] = {'B','M'};
+    uint32_t filesize = headerSize + infoHeaderSize + colorTableSize + w*h;
+    uint32_t reserved = 0;
+    uint32_t offset = headerSize + infoHeaderSize + colorTableSize;
+    // Info Header
+    uint32_t ihsize = infoHeaderSize;
+    uint32_t width = w;
+    uint32_t height = h;
+    uint16_t planes = 1;
+    uint16_t bpp = 8;    
+    uint32_t comp = 0;
+    uint32_t imagesize = w*h;
+    uint32_t xppm = 1;
+    uint32_t yppm = 1;
+    uint32_t colors = 256;
+    uint32_t impcolors = 0;
+    // Color Table
+    uint8_t ctable[colorTableSize];
+    
+    int off = 0;
+    
+    for( int i = 0; i < colors; i++ ){
+        ctable[off] = i;
+        ctable[off+1] = i;
+        ctable[off+2] = i;
+        ctable[off+3] = 0;
+        off += 4;
+    }
+    
+    // Header
+    fseek(out,pos+=fwrite(&signature,1,2,out),0);
+    fseek(out,pos+=fwrite(&filesize, 1,4,out),0);
+    fseek(out,pos+=fwrite(&reserved, 1,4,out),0);
+    fseek(out,pos+=fwrite(&offset,   1,4,out),0);
+    // Info Header
+    fseek(out,pos+=fwrite(&ihsize,   1,4,out),0);
+    fseek(out,pos+=fwrite(&width,    1,4,out),0);
+    fseek(out,pos+=fwrite(&height,   1,4,out),0);
+    fseek(out,pos+=fwrite(&planes,   1,2,out),0);
+    fseek(out,pos+=fwrite(&bpp,      1,2,out),0);
+    fseek(out,pos+=fwrite(&comp,     1,4,out),0);
+    fseek(out,pos+=fwrite(&imagesize,1,4,out),0);
+    fseek(out,pos+=fwrite(&xppm,     1,4,out),0);
+    fseek(out,pos+=fwrite(&yppm,     1,4,out),0);
+    fseek(out,pos+=fwrite(&colors,   1,4,out),0);
+    fseek(out,pos+=fwrite(&impcolors,1,4,out),0);
+    
+    fseek(out,pos+=fwrite(&ctable,   1,colorTableSize,out),0);
+    
+    uint8_t padding = 0;
+    
+    for( int i = h-1; i >= 0; --i ) {
+        for( int j = 0; j < width; ++j ) {
+            fseek(out,pos += fwrite(&Matrix[i][j],1,1,out),0);
+        }
+        for( int j = 0; j < width%4; ++j ) {
+            fseek(out,pos += fwrite(&padding,1,1,out),0);
         }
     }
-
-    unsigned char bmpfileheader[14] = {'B','M', 0,0,0,0, 0,0, 0,0, 54,0,0,0};
-    unsigned char bmpinfoheader[40] = {40,0,0,0, 0,0,0,0, 0,0,0,0, 1,0, 24,0};
-    unsigned char bmppad[3] = {0,0,0};
-
-    bmpfileheader[ 2] = (unsigned char)(filesize    );
-    bmpfileheader[ 3] = (unsigned char)(filesize>> 8);
-    bmpfileheader[ 4] = (unsigned char)(filesize>>16);
-    bmpfileheader[ 5] = (unsigned char)(filesize>>24);
-
-    bmpinfoheader[ 4] = (unsigned char)(       w    );
-    bmpinfoheader[ 5] = (unsigned char)(       w>> 8);
-    bmpinfoheader[ 6] = (unsigned char)(       w>>16);
-    bmpinfoheader[ 7] = (unsigned char)(       w>>24);
-    bmpinfoheader[ 8] = (unsigned char)(       h    );
-    bmpinfoheader[ 9] = (unsigned char)(       h>> 8);
-    bmpinfoheader[10] = (unsigned char)(       h>>16);
-    bmpinfoheader[11] = (unsigned char)(       h>>24);
-
-    f = fopen("img.bmp","wb");
-    fwrite(bmpfileheader,1,14,f);
-    fwrite(bmpinfoheader,1,40,f);
-    for(int i=0; i<h; i++)
-    {
-        fwrite(img+(w*(h-i-1)*3),3,w,f);
-        fwrite(bmppad,1,(4-(w*3)%4)%4,f);
-    }
-
-    free(img);
-    fclose(f);
+ 
+    fflush(out);
+    fclose(out);
 }
 
 // Wait for "ready" status from the Arduino.
@@ -93,7 +140,14 @@ static void help(char** argv) {
 // Main
 int main(int argc, char** argv) {
 
-	// Determine flashing/dumping mode.
+    memset(image, 0, sizeof(image));
+    
+//     int w = 100, h = 200;
+//     uint8_t test[w*h];
+//     for(int i = 0; i < h; ++i) for(int j = 0; j < w; ++j) test[i*w+j] = i;
+//     writeBMP( test, w, h ); 
+//     return 0;
+    
 	if (argc != 2) {
 		help(argv);
 		return 1;
@@ -120,28 +174,47 @@ int main(int argc, char** argv) {
 	unsigned char width, height;
 	RS232_PollComport(COM_PORT, &width, 1);
 	RS232_PollComport(COM_PORT, &height, 1);
-	printf( " Image resolution: %dx%d\n", width, height );
+	printf( "- Image resolution: %dx%d\n", width, height );
 
-    image = (unsigned char*)malloc(height*width*sizeof(unsigned char));
-    unsigned count = 0;
+//     image = (unsigned char*)malloc(height*width*sizeof(unsigned char));
+    unsigned x = 0, y = 0;
     
-    while(count < width*height) {
+    while(1) {
         unsigned char c;
         RS232_PollComport(COM_PORT, &c, 1);
-        image[count] = c;
-        count++;
-		RS232_SendByte(COM_PORT, c);
-// 		printf("%d ", c);
-// 		if(count%width==0) printf("\n");
-        if(count%width==0) printf("Progress: %d/%d\n", (count/width), width);
+//         printf("Recieved: %d\n", (int)c);
         
+		image[y][(y%2 == 0 ? x : width-x)] = c;
+        x++;
+		if( x == width ) { x = 0; y++; printf("Progress: %d/%d\n", y, height); }
+		if( y == height ) break;
+// 		RS232_SendByte(COM_PORT, 'A');        
     }
 
-    createBMP( image, width, height );
+    //createBMP( image, width, height );
+    printf("- Writing image file\n");
+    writeBMP( image, width, height );
     
-    free(image);
+//     printf("- Dumping data to file\n");
+//     dump( image, width, height );
+    
+//     printf("\n");
+//     for( int i = 0; i < height; ++i ) {
+//         for( int j = 0; j < width; ++j ) {
+//             char str[5];
+//             memset(str, 0, sizeof(str));
+//             sprintf(str, "%d ", image[i][j] );
+//             if(image[i][j] < 100) strcat(str, " ");
+//             if(image[i][j] < 10) strcat(str, " ");
+//             printf("%s", str);
+//         }
+//         printf("\n");
+//     }
+//     printf("\n");
+    
+//     free(image);
    
-	printf("Scanning finished\n");
+	printf("- Scanning finished\n");
 
 	// Successful exit.
 	return 0;
