@@ -108,13 +108,13 @@ static void waitRDY(void) {
 	unsigned char tempC;
 	uint32_t junkC = 0;
 	while(1) {
+		RS232_SendByte(COM_PORT, 'b');
 		printf("Sending begin signal\n");
-		RS232_SendByte(COM_PORT, 'B');
 		RS232_PollComport(COM_PORT, &tempC, 1);
 		printf("Read: %d\n", tempC);
-		if (tempC != 'R') {
+		if (tempC != 'r') {
 			junkC++;
-			printf("Junk Char %d or %c while waiting for %c so far skipped %d\n", tempC, tempC, 'R', junkC);
+			printf("Junk Char %d or %c while waiting for %c so far skipped %d\n", tempC, tempC, 'r', junkC);
 		} else break;
 	}
 	printf("Scanner acknowledged\n");
@@ -160,7 +160,7 @@ int main(int argc, char** argv) {
 	printf("Opening COM port %d\n", COM_PORT);
 
 	// Open COM port.
-	if (RS232_OpenComport(COM_PORT, 9600)) {
+	if (RS232_OpenComport(COM_PORT, 4800)) {
 		printf("ERROR: COM port %i could not be opened\n", COM_PORT);
 		printCOM();
 		return 1;
