@@ -4,7 +4,8 @@
 #include "rs232.h"
 
 static int COM_PORT = -1;
-uint8_t image[360][360];
+uint8_t depth[360][360];
+uint8_t thermal[360][360];
 
 void dump( uint8_t* Matrix, int w, int h ){
     FILE *out;
@@ -27,11 +28,11 @@ void dump( uint8_t* Matrix, int w, int h ){
     fclose(out);
 }
 
-void writeBMP( uint8_t Matrix[360][360], int w, int h ){
+void writeBMP( uint8_t Matrix[360][360], const char* filename, int w, int h ){
     FILE *out;
     long pos = 0;
  
-    out = fopen("img.bmp","wb");
+    out = fopen(filename,"wb");
  
     // Sizes
     static const uint8_t headerSize = 14;
@@ -140,13 +141,8 @@ static void help(char** argv) {
 // Main
 int main(int argc, char** argv) {
 
-    memset(image, 0, sizeof(image));
-    
-//     int w = 100, h = 200;
-//     uint8_t test[w*h];
-//     for(int i = 0; i < h; ++i) for(int j = 0; j < w; ++j) test[i*w+j] = i;
-//     writeBMP( test, w, h ); 
-//     return 0;
+    memset(depth, 0, sizeof(depth));
+    memset(thermal, 0, sizeof(thermal));
     
 	if (argc != 2) {
 		help(argv);
@@ -176,43 +172,24 @@ int main(int argc, char** argv) {
 	RS232_PollComport(COM_PORT, &height, 1);
 	printf( "- Image resolution: %dx%d\n", width, height );
 
-//     image = (unsigned char*)malloc(height*width*sizeof(unsigned char));
     unsigned x = 0, y = 0;
     
     while(1) {
         unsigned char c;
         RS232_PollComport(COM_PORT, &c, 1);
-//         printf("Recieved: %d\n", (int)c);
+		depth[y][(y%2 == 0 ? x : width-x)] = c;
+        RS232_PollComport(COM_PORT, &c, 1);
+		thermal[y][(y%2 == 0 ? x : width-x)] = c;
         
-		image[y][(y%2 == 0 ? x : width-x)] = c;
         x++;
 		if( x == width ) { x = 0; y++; printf("Progress: %d/%d\n", y, height); }
-		if( y == height ) break;
-// 		RS232_SendByte(COM_PORT, 'A');        
+		if( y == height ) break; 
     }
 
     //createBMP( image, width, height );
-    printf("- Writing image file\n");
-    writeBMP( image, width, height );
-    
-//     printf("- Dumping data to file\n");
-//     dump( image, width, height );
-    
-//     printf("\n");
-//     for( int i = 0; i < height; ++i ) {
-//         for( int j = 0; j < width; ++j ) {
-//             char str[5];
-//             memset(str, 0, sizeof(str));
-//             sprintf(str, "%d ", image[i][j] );
-//             if(image[i][j] < 100) strcat(str, " ");
-//             if(image[i][j] < 10) strcat(str, " ");
-//             printf("%s", str);
-//         }
-//         printf("\n");
-//     }
-//     printf("\n");
-    
-//     free(image);
+    printf("- Writing image files\n");
+    writeBMP( depth, "depth.bmp", width, height );
+    writeBMP( thermal, "thermal.bmp", width, height );
    
 	printf("- Scanning finished\n");
 

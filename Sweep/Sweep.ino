@@ -7,8 +7,8 @@
 
 #define PITCH_PIN 11
 #define YAW_PIN 12
-#define ECHO_PIN 10
-#define TRIG_PIN 9
+#define ECHO_PIN 9
+#define TRIG_PIN 8
 
 const unsigned char width = 64;
 const unsigned char height = 64;
@@ -44,6 +44,10 @@ void setup() {
   
   Serial.begin(4800);
 
+  digitalWrite(2, HIGH);
+  delay(500);
+  digitalWrite(2, LOW);
+  
   Wire.begin();
   while( Serial.available() ) {
     char junk = Serial.read();
@@ -54,8 +58,7 @@ void setup() {
   yaw.attach(YAW_PIN);  
   yaw.write(y_beg);
   
-  float temp = (ReadReg( TOBJ1 )* 0.02f) - 273.15;
-  Serial.print("Temperature: ");  Serial.println( temp );
+  float temp = (ReadReg( TOBJ1 )* 0.02f) - 273.15;;
   
   while(1) {
     while( !Serial.available() ) {}
@@ -78,6 +81,7 @@ void setup() {
     pitch.write( p ); 
     for( unsigned y = y_beg; y < y_end; ++y ) {
       Serial.write( (unsigned char)sonar.ping_cm() );
+      Serial.write( (unsigned char)((ReadReg( TOBJ1 )* 0.02f) - 273.15) );
       yaw.write( dir ? y : (y_end - y) + y_beg ); 
       delay(50);  
     }
