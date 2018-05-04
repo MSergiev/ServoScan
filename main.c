@@ -1,13 +1,18 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <limits.h>
 #include "rs232.h"
 
 static int COM_PORT = -1;
-uint8_t depth[360][360];
-uint8_t thermal[360][360];
+unsigned short w = 0;
+unsigned short h = 0;
+uint8_t* depth;
+uint8_t* thermal;
+int* rawDepth;
+int* rawThermal;
 
-void dump( uint8_t* Matrix, int w, int h ){
+void dump( uint8_t* Matrix ){
     FILE *out;
     
     out = fopen("img.txt","w");
@@ -28,7 +33,11 @@ void dump( uint8_t* Matrix, int w, int h ){
     fclose(out);
 }
 
-void writeBMP( uint8_t Matrix[360][360], const char* filename, int w, int h ){
+uint8_t map( int v, int bf, int bt ) {
+    return (uint8_t)( (((float)v - bf)/std::abs(bt-bf))*255 );
+}
+
+void writeBMP( uint8_t* Matrix, const char* filename ){
     FILE *out;
     long pos = 0;
  
@@ -93,7 +102,7 @@ void writeBMP( uint8_t Matrix[360][360], const char* filename, int w, int h ){
     
     for( int i = h-1; i >= 0; --i ) {
         for( int j = 0; j < width; ++j ) {
-            fseek(out,pos += fwrite(&Matrix[i][j],1,1,out),0);
+            fseek(out,pos += fwrite(&Matrix[i*h+j],1,1,out),0);
         }
         for( int j = 0; j < width%4; ++j ) {
             fseek(out,pos += fwrite(&padding,1,1,out),0);
@@ -112,15 +121,13 @@ static void waitRDY(void) {
 		RS232_SendByte(COM_PORT, 'b');
 		printf("Sending begin signal\n");
 		RS232_PollComport(COM_PORT, &tempC, 1);
-		printf("Read: %d\n", tempC);
 		if (tempC != 'r') {
 			junkC++;
 			printf("Junk Char %d or %c while waiting for %c so far skipped %d\n", tempC, tempC, 'r', junkC);
 		} else break;
 	}
 	printf("Scanner acknowledged\n");
-	if (junkC != 0)
-		printf("/n%d junk bytes skipped\n", junkC);
+	if (junkC != 0) printf("/n%d junk bytes skipped\n", junkC);
 }
 
 // Show COM port list.
@@ -140,59 +147,112 @@ static void help(char** argv) {
 
 // Main
 int main(int argc, char** argv) {
-
-    memset(depth, 0, sizeof(depth));
-    memset(thermal, 0, sizeof(thermal));
     
-	if (argc != 2) {
-		help(argv);
-		return 1;
-	}
-	
-	// Assign COM port number.
-	COM_PORT = strtoul(argv[1], NULL, 10);
-
-	// Display info.
-	printf("Opening COM port %d\n", COM_PORT);
-
-	// Open COM port.
-	if (RS232_OpenComport(COM_PORT, 4800)) {
-		printf("ERROR: COM port %i could not be opened\n", COM_PORT);
-		printCOM();
-		return 1;
-	}
-
-	// Wait for RDY from the Arduino.
-	waitRDY();
-
-	printf("\n- Scanner ready\n");
-
-	unsigned char width, height;
-	RS232_PollComport(COM_PORT, &width, 1);
-	RS232_PollComport(COM_PORT, &height, 1);
-	printf( "- Image resolution: %dx%d\n", width, height );
-
-    unsigned x = 0, y = 0;
-    
-    while(1) {
-        unsigned char c;
-        RS232_PollComport(COM_PORT, &c, 1);
-		depth[y][(y%2 == 0 ? x : width-x)] = c;
-        RS232_PollComport(COM_PORT, &c, 1);
-		thermal[y][(y%2 == 0 ? x : width-x)] = c;
-        
-        x++;
-		if( x == width ) { x = 0; y++; printf("Progress: %d/%d\n", y, height); }
-		if( y == height ) break; 
+    if (argc != 2) {
+        help(argv);
+        return 1;
     }
 
-    //createBMP( image, width, height );
-    printf("- Writing image files\n");
-    writeBMP( depth, "depth.bmp", width, height );
-    writeBMP( thermal, "thermal.bmp", width, height );
-   
-	printf("- Scanning finished\n");
+    // Assign COM port number.
+    COM_PORT = strtoul(argv[1], NULL, 10);
 
-	// Successful exit.
-	return 0;
+    // Display info.
+    printf("Opening COM port %d\n", COM_PORT);
+
+    // Open COM port.
+    if (RS232_OpenComport(COM_PORT, 9600)) {
+        printf("ERROR: COM port %i could not be opened\n", COM_PORT);
+        printCOM();
+        return 1;
+    }
+
+    // Wait for RDY from the Arduino.
+    waitRDY();
+
+    printf("\n- Scanner ready\n");
+
+    {       
+        unsigned char buf[4];
+        memset( buf, 0, sizeof(buf) );
+        unsigned char rec = 0;
+        
+        while( rec < sizeof(buf) ) {
+            rec += RS232_PollComport(COM_PORT, &buf[rec], 1);
+        }
+        
+        w = *((unsigned short*)(&buf[0]));
+        h = *((unsigned short*)(&buf[2]));
+        
+        printf( "- Image resolution: %dx%d\n", w, h );  
+    }
+    
+    depth = new uint8_t[w*h];
+    thermal = new uint8_t[w*h];
+    rawDepth = new int[w*h];
+    rawThermal = new int[w*h];
+
+    unsigned x = 0, y = 0;
+    short minThermal = SHRT_MAX, maxThermal = SHRT_MIN;
+    unsigned char minDepth = UCHAR_MAX, maxDepth = 0;
+    
+    while(1) {        
+        unsigned loc = y * h + (y%2 == 1 ? x : w - x - 1);
+        
+        unsigned char buf[3];
+        memset( buf, 0, sizeof(buf) );
+        unsigned char rec = 0;
+        
+        while( rec < sizeof(buf) ) {
+            rec += RS232_PollComport(COM_PORT, &buf[rec], 1);
+        }
+        
+        rawDepth[loc] = buf[0];
+        rawThermal[loc] = *((short*)(&buf[1]));
+        
+        printf("Progress: %d/%d\n", loc, w*h); 
+//         printf("Read: %d/%d\n", rawDepth[loc], rawThermal[loc]); 
+        
+        if( rawDepth[loc] > maxDepth ) maxDepth = rawDepth[loc];
+        else if( rawDepth[loc] < minDepth ) minDepth = rawDepth[loc];
+        if( rawThermal[loc] > maxThermal ) maxThermal = rawThermal[loc];
+        else if( rawThermal[loc] < minThermal ) minThermal = rawThermal[loc];
+        
+        x++;
+        if( x == w ) { 
+            x = 0; 
+            y++; 
+            printf("Progress: %d/%d\n", y, h); 
+        }
+        if( y == h ) break; 
+    }
+
+    for( unsigned i = 0; i < w*h; ++i ) {
+        depth[i] = map( rawDepth[i], minDepth, maxDepth );
+        thermal[i] = map( rawThermal[i], minThermal, maxThermal );
+    }
+    
+    printf("- Writing image files\n");
+    writeBMP( depth, "depth.bmp");
+    writeBMP( thermal, "thermal.bmp" );
+   
+    printf("- Scanning finished\n");
+
+    
+    printf("Min: %d/%d\n", minDepth, minThermal );
+    printf("Max: %d/%d\n", maxDepth, maxThermal );
+//     printf("Data\n");
+//     for( unsigned i = 0; i < w*h; ++i ) {
+//         printf("%d/%d\n", depth[i], thermal[i] );
+//     }
+    
+    delete[] depth;
+    delete[] thermal;
+    delete[] rawDepth;
+    delete[] rawThermal;
+    
+    RS232_CloseComport(COM_PORT);
+    
+    // Successful exit.
+    return 0;
+    
 }
